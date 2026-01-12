@@ -20,7 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const { width } = Dimensions.get('window');
 
 // Use your computer's local IP address for Expo Go
-const API_URL = 'http://192.168.1.10:5000/api';
+import { API_URL } from '../config/api';
 
 // GPS update interval in milliseconds
 const GPS_UPDATE_INTERVAL = 5000; // Update every 5 seconds
@@ -42,6 +42,7 @@ interface Contact {
   name: string;
   phone: string;
   isPrimary: boolean;
+  relationship?: string;
 }
 
 interface AlertHistory {

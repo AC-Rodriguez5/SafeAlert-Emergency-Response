@@ -14,10 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-// Use your computer's local IP address for the mobile app to connect to the backend
-// Find your IP: Windows - ipconfig, Mac/Linux - ifconfig
-const API_URL = 'http://192.168.1.10:5000/api';
+import { API_URL } from '../config/api';
 
 interface Props {
   onLogin: (email: string, token: string) => void;

@@ -38,7 +38,7 @@ router.post('/:userId', async (req, res) => {
 
     // If setting as primary, unset other primary contacts
     if (isPrimary) {
-      user.contacts.forEach(contact => {
+      user.contacts.forEach((contact: any) => {
         contact.isPrimary = false;
       });
     }
@@ -79,7 +79,7 @@ router.patch('/:userId/:contactIndex', async (req, res) => {
 
     // If setting as primary, unset other primary contacts
     if (isPrimary) {
-      user.contacts.forEach(contact => {
+      user.contacts.forEach((contact: any) => {
         contact.isPrimary = false;
       });
     }

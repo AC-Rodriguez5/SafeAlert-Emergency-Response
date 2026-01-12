@@ -179,7 +179,7 @@ router.get('/', async (req, res) => {
       .lean();
 
     // Transform data for frontend with idle time calculation
-    const formattedAlerts = alerts.map(alert => {
+    const formattedAlerts = alerts.map((alert: any) => {
       const lastUpdate = new Date(alert.lastLocationUpdate || alert.updatedAt);
       const idleTimeMs = Date.now() - lastUpdate.getTime();
       const idleMinutes = Math.floor(idleTimeMs / 60000);
@@ -334,7 +334,7 @@ router.get('/stats/summary', async (req, res) => {
       responding,
       resolved,
       last24Hours,
-      byType: byType.reduce((acc, item) => {
+      byType: byType.reduce((acc: Record<string, number>, item: { _id: string; count: number }) => {
         acc[item._id] = item.count;
         return acc;
       }, {} as Record<string, number>),

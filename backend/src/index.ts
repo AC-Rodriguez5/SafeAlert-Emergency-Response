@@ -72,8 +72,10 @@ io.on('connection', (socket) => {
 const startServer = async () => {
   await connectDatabase();
   
-  httpServer.listen(PORT, () => {
-    console.log(`\n🚀 Server running on http://localhost:${PORT}`);
+  httpServer.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
+    console.log(`📍 Local access: http://localhost:${PORT}`);
+    console.log(`📱 Phone access: http://192.168.1.10:${PORT}`);
     console.log(`🔌 WebSocket server ready`);
     console.log(`\n📱 API endpoints:`);
     console.log(`   POST /api/auth/register/user`);

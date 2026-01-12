@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Shield, Mail, Lock, Eye, EyeOff, AlertTriangle, CheckCircle } from 'lucide-react';
 
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from '../config/api';
 
 interface Props {
   onLogin: (email: string, token: string) => void;

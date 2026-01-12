@@ -24,10 +24,17 @@
       "package": "com.safealert.app",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
-      ]
+        "ACCESS_FINE_LOCATION",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "usesCleartextTraffic": true
     },
-    "web": {
+    "web": {},
+    "extra": {
+      "eas": {
+        "projectId": "26f7f572-8468-4672-be56-1bbdf64ab8c7"
+      }
     }
   }
 }
