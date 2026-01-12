@@ -1,4 +1,6 @@
 {
+  "installCommand": "npm install && chmod -R +x node_modules/.bin",
+  "buildCommand": "vite build",
   "rewrites": [
     { "source": "/(.*)", "destination": "/" }
   ]
