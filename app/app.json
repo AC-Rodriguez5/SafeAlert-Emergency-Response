@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "SafeAlert",
+    "slug": "safealert-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#DC2626"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.safealert.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SafeAlert needs your location to send accurate emergency alerts.",
+        "NSLocationAlwaysUsageDescription": "SafeAlert needs your location to send accurate emergency alerts even when the app is in the background."
+      }
+    },
+    "android": {
+      "package": "com.safealert.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+    }
+  }
+}
