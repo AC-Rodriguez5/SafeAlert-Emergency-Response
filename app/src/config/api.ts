@@ -6,7 +6,7 @@
 
 // For production (deployed backend)
 // Replace with your actual deployed backend URL
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://emergency-response-backend.onrender.com';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://safealert-emergency-response.onrender.com';
 
 export const API_URL = `${API_BASE_URL}/api`;
 
