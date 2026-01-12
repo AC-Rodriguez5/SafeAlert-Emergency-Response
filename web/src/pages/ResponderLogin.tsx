@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Shield, Mail, Lock, Eye, EyeOff, AlertTriangle, CheckCircle } from 'lucide-react';
 
+const API_URL = 'http://localhost:5000/api';
+
 interface Props {
   onLogin: (email: string, token: string) => void;
 }
@@ -23,25 +25,33 @@ export default function ResponderLogin({ onLogin }: Props) {
       return;
     }
     setIsLoading(true);
+    setError(null);
     
-    // Simulate API call
-    setTimeout(() => {
-      const key = `responder:${email}`;
-      if (localStorage.getItem(key)) {
-        setError('Responder already exists. Please login.');
-        setIsLoading(false);
+    try {
+      const response = await fetch(`${API_URL}/auth/register/responder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, badgeId, department }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        setError(data.error || 'Registration failed');
         return;
       }
-      const user = { name, email, password, badgeId, department };
-      localStorage.setItem(key, JSON.stringify(user));
+      
       setIsSignup(false);
       setSuccess('Account created successfully. Please log in.');
       setPassword('');
       setName('');
       setBadgeId('');
       setDepartment('');
+    } catch (err) {
+      setError('Network error. Please try again.');
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleLogin = async () => {
@@ -50,26 +60,31 @@ export default function ResponderLogin({ onLogin }: Props) {
       return;
     }
     setIsLoading(true);
+    setError(null);
 
-    // Simulate API call
-    setTimeout(() => {
-      const key = `responder:${email}`;
-      const raw = localStorage.getItem(key);
-      if (!raw) {
-        setError('Responder not found. Please sign up.');
-        setIsLoading(false);
+    try {
+      const response = await fetch(`${API_URL}/auth/login/responder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        setError(data.error || 'Login failed');
         return;
       }
-      const user = JSON.parse(raw);
-      if (user.password !== password) {
-        setError('Invalid credentials');
-        setIsLoading(false);
-        return;
-      }
-      const token = 'resp_' + Math.random().toString(36).substring(7);
-      onLogin(email, token);
+      
+      // Store token and responder info
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('responder', JSON.stringify(data.responder));
+      onLogin(email, data.token);
+    } catch (err) {
+      setError('Network error. Please try again.');
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   return (

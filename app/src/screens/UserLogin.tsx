@@ -15,6 +15,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+// Use your computer's local IP address for the mobile app to connect to the backend
+// Find your IP: Windows - ipconfig, Mac/Linux - ifconfig
+const API_URL = 'http://192.168.1.10:5000/api';
+
 interface Props {
   onLogin: (email: string, token: string) => void;
 }
@@ -37,16 +41,34 @@ export default function UserLogin({ onLogin }: Props) {
       return;
     }
     setIsLoading(true);
+    setError(null);
     
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      const response = await fetch(`${API_URL}/auth/register/user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, email, phone, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Registration failed');
+      }
+
       setIsSignup(false);
       setSuccess('Account created successfully! Please log in.');
       setPassword('');
       setName('');
       setPhone('');
+    } catch (err: any) {
+      setError(err.message || 'Registration failed. Please try again.');
+      Vibration.vibrate(100);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const handleLogin = async () => {
@@ -56,13 +78,30 @@ export default function UserLogin({ onLogin }: Props) {
       return;
     }
     setIsLoading(true);
+    setError(null);
 
-    // Simulate API call
-    setTimeout(() => {
-      const token = 'user_' + Math.random().toString(36).substring(7);
-      onLogin(email, token);
+    try {
+      const response = await fetch(`${API_URL}/auth/login/user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Login failed');
+      }
+
+      onLogin(data.user.email, data.token);
+    } catch (err: any) {
+      setError(err.message || 'Login failed. Please check your credentials.');
+      Vibration.vibrate(100);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   return (

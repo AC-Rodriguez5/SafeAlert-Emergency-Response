@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Shield, 
   Bell, 
@@ -18,8 +18,11 @@ import {
   Settings,
   AlertTriangle,
   CheckCircle,
-  Activity
+  Activity,
+  RefreshCw
 } from 'lucide-react';
+
+const API_URL = 'http://localhost:5000/api';
 
 interface Props {
   email: string;
@@ -28,18 +31,24 @@ interface Props {
 
 interface Alert {
   id: string;
-  type: 'medical' | 'fire' | 'police' | 'rescue';
-  priority: 'high' | 'medium' | 'low';
+  type: 'medical' | 'fire' | 'police' | 'rescue' | 'crime' | 'accident' | 'natural' | 'SOS' | 'other';
+  priority: 'high' | 'medium' | 'low' | 'critical';
   location: {
     lat: number;
     lng: number;
     address: string;
+    accuracy?: number;
   };
   description: string;
   time: string;
-  status: 'pending' | 'responding' | 'resolved';
+  status: 'pending' | 'responding' | 'resolved' | 'cancelled';
   userName: string;
   userPhone: string;
+  emergencyContacts?: { name: string; phone: string; relationship: string }[];
+  isOnline?: boolean;
+  idleTime?: string;
+  idleMinutes?: number;
+  lastLocationUpdate?: string;
 }
 
 declare global {
@@ -48,59 +57,13 @@ declare global {
   }
 }
 
-const mockAlerts: Alert[] = [
-  {
-    id: '1',
-    type: 'medical',
-    priority: 'high',
-    location: { lat: 14.5995, lng: 120.9842, address: '123 Main St, Manila' },
-    description: 'Chest pain reported, elderly patient',
-    time: '2 min ago',
-    status: 'pending',
-    userName: 'John Smith',
-    userPhone: '+63 912 345 6789'
-  },
-  {
-    id: '2',
-    type: 'fire',
-    priority: 'high',
-    location: { lat: 14.6042, lng: 120.9822, address: '456 Oak Avenue, Quezon City' },
-    description: 'Kitchen fire, smoke visible',
-    time: '5 min ago',
-    status: 'responding',
-    userName: 'Sarah Johnson',
-    userPhone: '+63 917 654 3210'
-  },
-  {
-    id: '3',
-    type: 'police',
-    priority: 'medium',
-    location: { lat: 14.5896, lng: 120.9762, address: '789 Park Road, Makati' },
-    description: 'Suspicious activity reported',
-    time: '12 min ago',
-    status: 'pending',
-    userName: 'Mike Brown',
-    userPhone: '+63 918 111 2222'
-  },
-  {
-    id: '4',
-    type: 'rescue',
-    priority: 'low',
-    location: { lat: 14.6101, lng: 120.9912, address: '321 River Trail, Pasig' },
-    description: 'Person requesting assistance',
-    time: '25 min ago',
-    status: 'resolved',
-    userName: 'Emily Davis',
-    userPhone: '+63 919 333 4444'
-  },
-];
-
 export default function ResponderDashboard({ email, onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<'map' | 'list' | 'analytics'>('map');
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
@@ -111,12 +74,139 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   ] as const;
 
+  // Fetch alerts from backend
+  const fetchAlerts = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(`${API_URL}/alerts`);
+      const data = await response.json();
+      if (data.alerts) {
+        setAlerts(data.alerts);
+        // Update markers on map if it exists
+        if (mapInstanceRef.current && window.L) {
+          updateMapMarkers(data.alerts);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch alerts:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Update markers on the map for live location tracking
+  const updateMapMarkers = useCallback((alertsData: Alert[]) => {
+    if (!mapInstanceRef.current || !window.L) return;
+
+    // Clear existing markers
+    markersRef.current.forEach(marker => {
+      mapInstanceRef.current.removeLayer(marker);
+    });
+    markersRef.current = [];
+
+    // Add new markers
+    alertsData.forEach(alert => {
+      if (alert.status === 'resolved' || alert.status === 'cancelled') return;
+
+      const isOffline = alert.isOnline === false;
+      const idleMinutes = alert.idleMinutes || 0;
+
+      // Create custom icon based on online status
+      const iconHtml = `
+        <div style="position: relative;">
+          <div style="
+            background-color: ${isOffline ? '#6B7280' : getTypeColor(alert.type)};
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            font-size: 16px;
+            ${!isOffline && alert.status === 'pending' ? 'animation: pulse 2s infinite;' : ''}
+          ">
+            ${getTypeIcon(alert.type)}
+          </div>
+          ${isOffline ? `
+            <div style="
+              position: absolute;
+              top: -8px;
+              right: -8px;
+              background: #EF4444;
+              color: white;
+              font-size: 9px;
+              padding: 2px 4px;
+              border-radius: 8px;
+              font-weight: bold;
+            ">
+              ${idleMinutes}m
+            </div>
+          ` : ''}
+        </div>
+      `;
+
+      const customIcon = window.L.divIcon({
+        html: iconHtml,
+        className: 'custom-marker',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      });
+
+      const marker = window.L.marker([alert.location.lat, alert.location.lng], { icon: customIcon })
+        .addTo(mapInstanceRef.current)
+        .bindPopup(`
+          <div style="min-width: 220px; padding: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <span style="font-size: 20px;">${getTypeIcon(alert.type)}</span>
+              <div>
+                <strong style="color: ${getTypeColor(alert.type)}; text-transform: capitalize;">${alert.type}</strong>
+                <br/>
+                <small style="color: ${isOffline ? '#EF4444' : '#059669'};">
+                  ${isOffline ? `⚫ Offline (${alert.idleTime} idle)` : '🟢 Online - Live tracking'}
+                </small>
+              </div>
+            </div>
+            <p style="margin: 4px 0;"><strong>User:</strong> ${alert.userName}</p>
+            ${alert.emergencyContacts && alert.emergencyContacts.length > 0 
+              ? `<div style="margin: 8px 0; padding: 8px; background: #F0FDF4; border-radius: 4px;">
+                  <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: bold; color: #166534;">Emergency Contacts:</p>
+                  ${alert.emergencyContacts.map((c: any) => `
+                    <p style="margin: 2px 0; font-size: 12px;">📞 ${c.name} (${c.relationship}): <a href="tel:${c.phone}" style="color: #2563EB;">${c.phone}</a></p>
+                  `).join('')}
+                </div>`
+              : `<p style="margin: 4px 0;"><strong>Phone:</strong> ${alert.userPhone}</p>`}
+            <p style="margin: 4px 0;"><strong>Status:</strong> <span style="text-transform: capitalize;">${alert.status}</span></p>
+            <p style="margin: 4px 0; font-size: 11px; color: #666;">${alert.time}</p>
+            ${alert.location.accuracy ? `<p style="margin: 4px 0; font-size: 11px; color: #666;">Accuracy: ±${Math.round(alert.location.accuracy)}m</p>` : ''}
+          </div>
+        `);
+
+      marker.on('click', () => setSelectedAlert(alert));
+      markersRef.current.push(marker);
+    });
+  }, []);
+
+  // Fetch alerts on mount and set up polling
+  useEffect(() => {
+    fetchAlerts();
+    
+    // Poll for new alerts every 5 seconds (for real-time feel)
+    const interval = setInterval(fetchAlerts, 5000);
+    
+    return () => clearInterval(interval);
+  }, [fetchAlerts]);
+
   const getTypeColor = (type: string) => {
     switch (type) {
       case 'medical': return '#DC2626';
       case 'fire': return '#EA580C';
       case 'police': return '#2563EB';
       case 'rescue': return '#059669';
+      case 'crime': return '#7C3AED';
+      case 'accident': return '#D97706';
+      case 'SOS': return '#DC2626';
       default: return '#6B7280';
     }
   };
@@ -127,12 +217,16 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
       case 'fire': return '🔥';
       case 'police': return '🚔';
       case 'rescue': return '🆘';
+      case 'crime': return '⚠️';
+      case 'accident': return '🚗';
+      case 'SOS': return '🆘';
       default: return '📍';
     }
   };
 
   const getPriorityBadge = (priority: string) => {
     switch (priority) {
+      case 'critical': return 'bg-red-100 text-red-700 border-red-200';
       case 'high': return 'bg-red-100 text-red-700 border-red-200';
       case 'medium': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
       case 'low': return 'bg-green-100 text-green-700 border-green-200';
@@ -203,7 +297,7 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
     markersRef.current.forEach(marker => marker.remove());
     markersRef.current = [];
 
-    alerts.forEach(alert => {
+    alerts.filter(a => a.status !== 'resolved' && a.status !== 'cancelled').forEach(alert => {
       const color = getTypeColor(alert.type);
       const isSelected = selectedAlert?.id === alert.id;
       const isPending = alert.status === 'pending';
@@ -266,7 +360,9 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
           <div style="font-size: 11px; color: #888;">
             📍 ${alert.location.address}<br/>
             👤 ${alert.userName}<br/>
-            📞 ${alert.userPhone}
+            ${alert.emergencyContacts && alert.emergencyContacts.length > 0 
+              ? alert.emergencyContacts.map((c: any) => `📞 ${c.name}: ${c.phone}`).join('<br/>')
+              : `📞 ${alert.userPhone}`}
           </div>
         </div>
       `);
@@ -282,23 +378,58 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
     });
   }, [alerts, selectedAlert, mapLoaded, activeTab]);
 
-  const handleRespond = (alertId: string) => {
-    setAlerts(prev => prev.map(a => 
-      a.id === alertId ? { ...a, status: 'responding' as const } : a
-    ));
+  const handleRespond = async (alertId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/alerts/${alertId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'responding',
+          responderName: email,
+        }),
+      });
+      
+      if (response.ok) {
+        setAlerts(prev => prev.map(a => 
+          a.id === alertId ? { ...a, status: 'responding' as const } : a
+        ));
+        if (selectedAlert?.id === alertId) {
+          setSelectedAlert({ ...selectedAlert, status: 'responding' });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to respond to alert:', error);
+    }
   };
 
-  const handleResolve = (alertId: string) => {
-    setAlerts(prev => prev.map(a => 
-      a.id === alertId ? { ...a, status: 'resolved' as const } : a
-    ));
+  const handleResolve = async (alertId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/alerts/${alertId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'resolved',
+        }),
+      });
+      
+      if (response.ok) {
+        setAlerts(prev => prev.map(a => 
+          a.id === alertId ? { ...a, status: 'resolved' as const } : a
+        ));
+        if (selectedAlert?.id === alertId) {
+          setSelectedAlert({ ...selectedAlert, status: 'resolved' });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to resolve alert:', error);
+    }
   };
 
   const stats = {
     total: alerts.length,
     pending: alerts.filter(a => a.status === 'pending').length,
     responding: alerts.filter(a => a.status === 'responding').length,
-    resolved: alerts.filter(a => a.status === 'resolved').length,
+    resolved: alerts.filter(a => a.status === 'resolved' || a.status === 'cancelled').length,
   };
 
   return (
@@ -359,14 +490,14 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
       {/* Content */}
       {activeTab === 'map' ? (
         <div className="flex h-[calc(100vh-140px)]">
-          {/* Sidebar - Alerts List */}
+          {/* Sidebar - Alerts List (only active alerts) */}
           <div className={`${showSidebar ? 'w-80' : 'w-0'} transition-all duration-300 bg-white border-r border-gray-200 flex flex-col overflow-hidden flex-shrink-0`}>
               <div className="p-3 border-b border-gray-200 bg-gray-50">
-                <h2 className="font-semibold text-gray-800 text-sm">Emergency Alerts</h2>
-                <p className="text-xs text-gray-500">{alerts.length} total alerts</p>
+                <h2 className="font-semibold text-gray-800 text-sm">Active Emergencies</h2>
+                <p className="text-xs text-gray-500">{alerts.filter(a => a.status !== 'resolved' && a.status !== 'cancelled').length} active alerts</p>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {alerts.map((alert) => (
+                {alerts.filter(alert => alert.status !== 'resolved' && alert.status !== 'cancelled').map((alert) => (
                   <div 
                     key={alert.id}
                     onClick={() => setSelectedAlert(alert)}
@@ -375,11 +506,18 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <div 
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm"
-                        style={{ backgroundColor: getTypeColor(alert.type) }}
-                      >
-                        {getTypeIcon(alert.type)}
+                      <div className="relative">
+                        <div 
+                          className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm"
+                          style={{ backgroundColor: alert.isOnline === false ? '#6B7280' : getTypeColor(alert.type) }}
+                        >
+                          {getTypeIcon(alert.type)}
+                        </div>
+                        {alert.isOnline === false && (
+                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] px-1 rounded font-bold">
+                            {alert.idleTime}
+                          </span>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -387,11 +525,20 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
                             {alert.priority.toUpperCase()}
                           </span>
                           <span className={`w-1.5 h-1.5 rounded-full ${getStatusBadge(alert.status)}`} />
+                          {alert.isOnline === false ? (
+                            <span className="text-[9px] px-1 py-0.5 bg-red-100 text-red-600 rounded font-medium">OFFLINE</span>
+                          ) : (
+                            <span className="text-[9px] px-1 py-0.5 bg-green-100 text-green-600 rounded font-medium">LIVE</span>
+                          )}
                         </div>
-                        <p className="text-xs font-medium text-gray-800 truncate">{alert.description}</p>
+                        <p className="text-xs font-medium text-gray-800 truncate">{alert.userName}</p>
+                        <p className="text-[10px] text-gray-500 truncate">{alert.description}</p>
                         <p className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
                           <Clock className="w-3 h-3" />
                           {alert.time}
+                          {alert.isOnline === false && alert.idleTime && (
+                            <span className="text-red-500"> • Idle: {alert.idleTime}</span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -456,10 +603,28 @@ export default function ResponderDashboard({ email, onLogout }: Props) {
                         <Users className="w-4 h-4" />
                         <span>{selectedAlert.userName}</span>
                       </div>
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <Phone className="w-4 h-4" />
-                        <span>{selectedAlert.userPhone}</span>
-                      </div>
+                      
+                      {/* Emergency Contacts */}
+                      {selectedAlert.emergencyContacts && selectedAlert.emergencyContacts.length > 0 ? (
+                        <div className="mt-3 pt-3 border-t border-gray-100">
+                          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Emergency Contacts</p>
+                          {selectedAlert.emergencyContacts.map((contact, index) => (
+                            <div key={index} className="flex items-center gap-2 text-sm text-gray-600 py-1">
+                              <Phone className="w-4 h-4 text-green-600" />
+                              <span className="font-medium">{contact.name}</span>
+                              <span className="text-gray-400">({contact.relationship})</span>
+                              <a href={`tel:${contact.phone}`} className="text-blue-600 hover:underline ml-auto">
+                                {contact.phone}
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <Phone className="w-4 h-4" />
+                          <span>{selectedAlert.userPhone}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="pt-3 border-t border-gray-200 flex gap-2">

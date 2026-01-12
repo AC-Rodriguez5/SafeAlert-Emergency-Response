@@ -1,11 +1,11 @@
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 
-import UserLogin from './src/screens/UserLogin';
-import UserDashboard from './src/screens/UserDashboard';
+import UserLogin from '@/screens/UserLogin';
+import UserDashboard from '@/screens/UserDashboard';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -17,25 +17,6 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    try {
-      const token = await SecureStore.getItemAsync('userToken');
-      const email = await SecureStore.getItemAsync('userEmail');
-      if (token && email) {
-        setIsAuthenticated(true);
-        setUserEmail(email);
-      }
-    } catch (error) {
-      console.log('Auth check error:', error);
-    }
-    setIsLoading(false);
-  };
 
   const handleLogin = async (email: string, token: string) => {
     await SecureStore.setItemAsync('userToken', token);
@@ -50,10 +31,6 @@ export default function App() {
     setIsAuthenticated(false);
     setUserEmail(null);
   };
-
-  if (isLoading) {
-    return null;
-  }
 
   return (
     <NavigationContainer>

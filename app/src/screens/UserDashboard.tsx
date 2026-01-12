@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,21 @@ import {
   Dimensions,
   Vibration,
   TextInput,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
+
+// Use your computer's local IP address for Expo Go
+const API_URL = 'http://192.168.1.10:5000/api';
+
+// GPS update interval in milliseconds
+const GPS_UPDATE_INTERVAL = 5000; // Update every 5 seconds
 
 interface Props {
   email: string;
@@ -40,7 +49,15 @@ interface AlertHistory {
   type: string;
   timestamp: Date;
   location: string;
-  status: 'sent' | 'received' | 'resolved';
+  status: 'sent' | 'received' | 'resolved' | 'cancelled';
+}
+
+interface ActiveAlert {
+  id: string;
+  type: string;
+  startTime: Date;
+  status: 'pending' | 'responding' | 'resolved' | 'cancelled';
+  responderName?: string;
 }
 
 const emergencyTypes: EmergencyType[] = [
@@ -65,10 +82,267 @@ export default function UserDashboard({ email, onLogout }: Props) {
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
   const [iotConnected, setIotConnected] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [activeAlert, setActiveAlert] = useState<ActiveAlert | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingUpdates, setPendingUpdates] = useState<any[]>([]);
+  
+  const locationSubscription = useRef<Location.LocationSubscription | null>(null);
+  const gpsUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+  const statusPollInterval = useRef<NodeJS.Timeout | null>(null);
+  const appState = useRef(AppState.currentState);
 
+  // Load user data and contacts from storage
   useEffect(() => {
+    loadUserData();
+    loadContacts();
     getLocation();
+
+    // App state listener
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+      stopLocationTracking();
+      if (statusPollInterval.current) {
+        clearInterval(statusPollInterval.current);
+      }
+    };
   }, []);
+
+  // Start location tracking and status polling when there's an active alert
+  useEffect(() => {
+    if (activeAlert && activeAlert.status !== 'resolved') {
+      startLocationTracking();
+      startStatusPolling();
+    } else {
+      stopLocationTracking();
+      if (statusPollInterval.current) {
+        clearInterval(statusPollInterval.current);
+        statusPollInterval.current = null;
+      }
+    }
+  }, [activeAlert]);
+
+  // Poll for alert status changes
+  const startStatusPolling = () => {
+    if (statusPollInterval.current) {
+      clearInterval(statusPollInterval.current);
+    }
+    
+    // Poll every 5 seconds
+    statusPollInterval.current = setInterval(async () => {
+      if (activeAlert && activeAlert.status !== 'resolved') {
+        await checkAlertStatus();
+      }
+    }, 5000);
+  };
+
+  const checkAlertStatus = async () => {
+    if (!activeAlert) return;
+    
+    try {
+      const response = await fetch(`${API_URL}/alerts/${activeAlert.id}`);
+      const data = await response.json();
+      
+      if (data.alert) {
+        const serverStatus = data.alert.status;
+        const responderName = data.alert.responderName;
+        
+        // Update if status changed
+        if (serverStatus !== activeAlert.status) {
+          if (serverStatus === 'resolved' || serverStatus === 'cancelled') {
+            // Alert resolved/cancelled - clear active alert and update history
+            Vibration.vibrate([100, 100, 100]);
+            Alert.alert(
+              serverStatus === 'resolved' ? '✓ Emergency Resolved' : '✕ Alert Cancelled',
+              serverStatus === 'resolved' 
+                ? 'Your emergency has been resolved by the responder. Stay safe!'
+                : 'This alert has been cancelled.',
+              [{ text: 'OK' }]
+            );
+            
+            // Update history
+            setAlertHistory(prev => prev.map(h => 
+              h.id === activeAlert.id ? { ...h, status: serverStatus } : h
+            ));
+            
+            // Clear active alert
+            setActiveAlert(null);
+            await AsyncStorage.removeItem('activeAlert');
+            
+          } else if (serverStatus === 'responding') {
+            // Responder is on the way
+            Vibration.vibrate([100, 50, 100]);
+            const updatedAlert = {
+              ...activeAlert,
+              status: 'responding' as const,
+              responderName: responderName || 'Responder',
+            };
+            setActiveAlert(updatedAlert);
+            await AsyncStorage.setItem('activeAlert', JSON.stringify(updatedAlert));
+            
+            // Update history
+            setAlertHistory(prev => prev.map(h => 
+              h.id === activeAlert.id ? { ...h, status: 'received' } : h
+            ));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking alert status:', error);
+    }
+  };
+
+  const handleAppStateChange = (nextAppState: AppStateStatus) => {
+    if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+      // App came to foreground - refresh location
+      if (activeAlert) {
+        getLocation();
+      }
+    }
+    appState.current = nextAppState;
+  };
+
+  const loadUserData = async () => {
+    try {
+      const storedUserId = await AsyncStorage.getItem('userId');
+      const storedActiveAlert = await AsyncStorage.getItem('activeAlert');
+      
+      if (storedUserId) setUserId(storedUserId);
+      if (storedActiveAlert) {
+        const alert = JSON.parse(storedActiveAlert);
+        setActiveAlert(alert);
+      }
+    } catch (error) {
+      console.error('Error loading user data:', error);
+    }
+  };
+
+  const loadContacts = async () => {
+    try {
+      const storedContacts = await AsyncStorage.getItem('contacts');
+      if (storedContacts) {
+        setContacts(JSON.parse(storedContacts));
+      }
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+    }
+  };
+
+  const saveContacts = async (newContacts: Contact[]) => {
+    try {
+      await AsyncStorage.setItem('contacts', JSON.stringify(newContacts));
+    } catch (error) {
+      console.error('Error saving contacts:', error);
+    }
+  };
+
+  const startLocationTracking = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationError('Location permission denied');
+        return;
+      }
+
+      // Start watching location
+      locationSubscription.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: GPS_UPDATE_INTERVAL,
+          distanceInterval: 5, // Update if moved 5 meters
+        },
+        (newLocation) => {
+          setLocation(newLocation);
+          // Send location update to server
+          if (activeAlert) {
+            sendLocationUpdate(newLocation);
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error starting location tracking:', error);
+      setLocationError('Unable to track location');
+    }
+  };
+
+  const stopLocationTracking = () => {
+    if (locationSubscription.current) {
+      locationSubscription.current.remove();
+      locationSubscription.current = null;
+    }
+    if (gpsUpdateInterval.current) {
+      clearInterval(gpsUpdateInterval.current);
+      gpsUpdateInterval.current = null;
+    }
+  };
+
+  const sendLocationUpdate = async (loc: Location.LocationObject) => {
+    if (!activeAlert || !isOnline) {
+      // Queue update for later if offline
+      if (activeAlert && !isOnline) {
+        setPendingUpdates(prev => [...prev, {
+          alertId: activeAlert.id,
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          accuracy: loc.coords.accuracy,
+          timestamp: new Date(),
+        }]);
+      }
+      return;
+    }
+
+    try {
+      await fetch(`${API_URL}/alerts/${activeAlert.id}/location`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          accuracy: loc.coords.accuracy,
+          address: 'Live location update',
+        }),
+      });
+    } catch (error) {
+      console.error('Error sending location update:', error);
+      // Queue for retry
+      setPendingUpdates(prev => [...prev, {
+        alertId: activeAlert.id,
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        accuracy: loc.coords.accuracy,
+        timestamp: new Date(),
+      }]);
+    }
+  };
+
+  const sendPendingUpdates = async () => {
+    if (pendingUpdates.length === 0) return;
+
+    const updates = [...pendingUpdates];
+    setPendingUpdates([]);
+
+    for (const update of updates) {
+      try {
+        await fetch(`${API_URL}/alerts/${update.alertId}/location`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            latitude: update.latitude,
+            longitude: update.longitude,
+            accuracy: update.accuracy,
+          }),
+        });
+      } catch (error) {
+        console.error('Error sending pending update:', error);
+      }
+    }
+  };
 
   const getLocation = async () => {
     try {
@@ -87,19 +361,81 @@ export default function UserDashboard({ email, onLogout }: Props) {
   };
 
   const sendEmergencyAlert = async (type: string) => {
-    if (contacts.length === 0) {
-      Alert.alert('No Contacts', 'Please add emergency contacts before sending alerts.');
-      return;
-    }
-
     setSelectedEmergency(type);
     setIsSending(true);
     Vibration.vibrate(200);
 
-    setTimeout(() => {
-      setIsSending(false);
-      setSelectedEmergency(null);
+    // Get fresh location
+    await getLocation();
+
+    const alertData = {
+      type: type, // Already using correct type ID (medical, fire, crime, etc.) or 'SOS'
+      description: `${type} emergency reported via mobile app`,
+      location: {
+        latitude: location?.coords.latitude || 14.5995,
+        longitude: location?.coords.longitude || 120.9842,
+        accuracy: location?.coords.accuracy || 10,
+        address: 'Location from mobile device',
+      },
+      userName: email.split('@')[0],
+      userPhone: contacts.length > 0 ? contacts[0].phone : 'Not provided',
+      emergencyContacts: contacts.map(c => ({
+        name: c.name,
+        phone: c.phone,
+        relationship: c.relationship || 'Contact',
+      })),
+    };
+
+    try {
+      console.log('Sending alert to:', API_URL);
+      console.log('Alert data:', JSON.stringify(alertData));
       
+      const response = await fetch(`${API_URL}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(alertData),
+      });
+
+      console.log('Response status:', response.status);
+      const data = await response.json();
+      console.log('Response data:', JSON.stringify(data));
+
+      if (response.ok) {
+        // Store alert ID for continuous GPS tracking
+        const newActiveAlert: ActiveAlert = {
+          id: data.alert?._id || data.alert?.id,
+          type,
+          startTime: new Date(),
+          status: 'pending',
+        };
+        setActiveAlert(newActiveAlert);
+        await AsyncStorage.setItem('activeAlert', JSON.stringify(newActiveAlert));
+
+        const newAlert: AlertHistory = {
+          id: data.alert?._id || data.alert?.id || Date.now().toString(),
+          type,
+          timestamp: new Date(),
+          location: location ? `${location.coords.latitude.toFixed(4)}, ${location.coords.longitude.toFixed(4)}` : 'Unknown',
+          status: 'sent',
+        };
+        setAlertHistory(prev => [newAlert, ...prev]);
+        setIsOnline(true);
+
+        Alert.alert(
+          '✓ Alert Sent',
+          `Your ${type} alert has been sent to emergency responders. GPS tracking is now active.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        throw new Error(data.error || data.message || 'Failed to send alert');
+      }
+    } catch (error: any) {
+      console.error('Send alert error:', error);
+      setIsOnline(false);
+      
+      // Save alert locally for retry
       const newAlert: AlertHistory = {
         id: Date.now().toString(),
         type,
@@ -108,34 +444,58 @@ export default function UserDashboard({ email, onLogout }: Props) {
         status: 'sent',
       };
       setAlertHistory(prev => [newAlert, ...prev]);
-
+      
       Alert.alert(
-        '✓ Alert Sent',
-        `Your ${type} alert has been sent to ${contacts.length} emergency contact(s). Help is on the way.`,
+        'Connection Error',
+        `Could not reach the server. Please check:\n\n1. Backend is running on your computer\n2. Phone and computer are on same WiFi\n3. API_URL is correct (${API_URL})\n\nError: ${error.message}`,
         [{ text: 'OK' }]
       );
-    }, 2000);
+    } finally {
+      setIsSending(false);
+      setSelectedEmergency(null);
+    }
+  };
+
+  const cancelActiveAlert = async () => {
+    if (!activeAlert) return;
+
+    Alert.alert(
+      'Cancel Alert',
+      'Are you sure you want to cancel the active alert? Responders will be notified.',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await fetch(`${API_URL}/alerts/${activeAlert.id}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'cancelled' }),
+              });
+            } catch (error) {
+              console.error('Error cancelling alert:', error);
+            }
+            setActiveAlert(null);
+            await AsyncStorage.removeItem('activeAlert');
+            stopLocationTracking();
+          },
+        },
+      ]
+    );
   };
 
   const handleEmergencyPress = (type: EmergencyType) => {
-    if (contacts.length === 0) {
-      Alert.alert(
-        'Add Contacts First',
-        'Please add emergency contacts before sending alerts.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
     Alert.alert(
       `${type.name}`,
-      `Send ${type.name.toLowerCase()} alert to your emergency contacts?`,
+      `Send ${type.name.toLowerCase()} alert to emergency responders?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'Send Alert', 
           style: 'destructive',
-          onPress: () => sendEmergencyAlert(type.name)
+          onPress: () => sendEmergencyAlert(type.id)
         },
       ]
     );
@@ -157,7 +517,7 @@ export default function UserDashboard({ email, onLogout }: Props) {
     );
   };
 
-  const addContact = () => {
+  const addContact = async () => {
     if (!newContactName.trim() || !newContactPhone.trim()) {
       Alert.alert('Error', 'Please enter both name and phone number.');
       return;
@@ -170,13 +530,33 @@ export default function UserDashboard({ email, onLogout }: Props) {
       isPrimary: contacts.length === 0,
     };
 
-    setContacts(prev => [...prev, newContact]);
+    const updatedContacts = [...contacts, newContact];
+    setContacts(updatedContacts);
+    await saveContacts(updatedContacts);
+    
+    // Also save to backend if userId exists
+    if (userId) {
+      try {
+        await fetch(`${API_URL}/contacts/${userId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newContact.name,
+            phone: newContact.phone,
+            isPrimary: newContact.isPrimary,
+          }),
+        });
+      } catch (error) {
+        console.error('Error saving contact to server:', error);
+      }
+    }
+    
     setNewContactName('');
     setNewContactPhone('');
     Alert.alert('Success', 'Contact added successfully.');
   };
 
-  const deleteContact = (id: string) => {
+  const deleteContact = async (id: string) => {
     Alert.alert(
       'Delete Contact',
       'Are you sure you want to delete this contact?',
@@ -185,7 +565,11 @@ export default function UserDashboard({ email, onLogout }: Props) {
         { 
           text: 'Delete', 
           style: 'destructive',
-          onPress: () => setContacts(prev => prev.filter(c => c.id !== id))
+          onPress: async () => {
+            const updatedContacts = contacts.filter(c => c.id !== id);
+            setContacts(updatedContacts);
+            await saveContacts(updatedContacts);
+          }
         },
       ]
     );
@@ -201,6 +585,49 @@ export default function UserDashboard({ email, onLogout }: Props) {
 
   const renderEmergencyTab = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+      {/* Active Alert Banner */}
+      {activeAlert && (
+        <View style={[
+          styles.activeAlertBanner,
+          activeAlert.status === 'responding' && { backgroundColor: '#059669' }
+        ]}>
+          <View style={styles.activeAlertContent}>
+            <Ionicons 
+              name={activeAlert.status === 'responding' ? 'car' : 'radio'} 
+              size={24} 
+              color="#FFF" 
+            />
+            <View style={styles.activeAlertText}>
+              <Text style={styles.activeAlertTitle}>
+                {activeAlert.status === 'responding' 
+                  ? 'Responder On The Way!' 
+                  : 'Alert Active - GPS Tracking'}
+              </Text>
+              <Text style={styles.activeAlertSubtitle}>
+                {activeAlert.type} • {activeAlert.status === 'responding'
+                  ? `🚨 ${activeAlert.responderName || 'Responder'} is coming`
+                  : isOnline ? '🟢 Live' : '🔴 Offline - will sync'}
+              </Text>
+            </View>
+          </View>
+          {activeAlert.status !== 'responding' && (
+            <TouchableOpacity style={styles.cancelAlertButton} onPress={cancelActiveAlert}>
+              <Text style={styles.cancelAlertText}>Cancel</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Connection Status */}
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="cloud-offline" size={20} color="#D97706" />
+          <Text style={styles.offlineText}>
+            Offline - Location updates will be sent when connection is restored
+          </Text>
+        </View>
+      )}
+
       {/* GPS Status Card */}
       <View style={styles.gpsCard}>
         <View style={styles.gpsHeader}>
@@ -208,7 +635,7 @@ export default function UserDashboard({ email, onLogout }: Props) {
           <Text style={styles.gpsTitle}>GPS Status</Text>
           <View style={[styles.gpsBadge, { backgroundColor: location ? '#D1FAE5' : '#FEE2E2' }]}>
             <Text style={[styles.gpsBadgeText, { color: location ? '#059669' : '#DC2626' }]}>
-              {location ? 'Active' : 'Inactive'}
+              {activeAlert ? 'Tracking' : location ? 'Active' : 'Inactive'}
             </Text>
           </View>
         </View>
@@ -223,7 +650,9 @@ export default function UserDashboard({ email, onLogout }: Props) {
         )}
         <View style={styles.gpsNote}>
           <Ionicons name="information-circle-outline" size={16} color="#6B7280" />
-          <Text style={styles.gpsNoteText}>Using simulated GPS location</Text>
+          <Text style={styles.gpsNoteText}>
+            {activeAlert ? 'GPS tracking every 5 seconds' : 'GPS location ready'}
+          </Text>
         </View>
       </View>
 
@@ -381,7 +810,11 @@ export default function UserDashboard({ email, onLogout }: Props) {
         alertHistory.map((alert) => (
           <View key={alert.id} style={styles.historyCard}>
             <View style={styles.historyIcon}>
-              <Ionicons name="alert-circle" size={24} color="#DC2626" />
+              <Ionicons 
+                name={alert.status === 'resolved' || alert.status === 'cancelled' ? 'checkmark-circle' : 'alert-circle'} 
+                size={24} 
+                color={alert.status === 'resolved' ? '#059669' : alert.status === 'cancelled' ? '#6B7280' : '#DC2626'} 
+              />
             </View>
             <View style={styles.historyInfo}>
               <Text style={styles.historyType}>{alert.type}</Text>
@@ -391,12 +824,23 @@ export default function UserDashboard({ email, onLogout }: Props) {
               </Text>
             </View>
             <View style={[styles.statusBadge, 
-              { backgroundColor: alert.status === 'resolved' ? '#D1FAE5' : '#FEF3C7' }
+              { backgroundColor: 
+                alert.status === 'resolved' ? '#D1FAE5' : 
+                alert.status === 'cancelled' ? '#F3F4F6' :
+                alert.status === 'received' ? '#DBEAFE' : '#FEF3C7' 
+              }
             ]}>
               <Text style={[styles.statusText,
-                { color: alert.status === 'resolved' ? '#059669' : '#D97706' }
+                { color: 
+                  alert.status === 'resolved' ? '#059669' : 
+                  alert.status === 'cancelled' ? '#6B7280' :
+                  alert.status === 'received' ? '#2563EB' : '#D97706' 
+                }
               ]}>
-                {alert.status}
+                {alert.status === 'resolved' ? '✓ Resolved' :
+                 alert.status === 'cancelled' ? '✕ Cancelled' :
+                 alert.status === 'received' ? '🚨 Responding' : 
+                 alert.status}
               </Text>
             </View>
           </View>
@@ -858,5 +1302,58 @@ const styles = StyleSheet.create({
   navLabel: {
     fontSize: 10,
     marginTop: 4,
+  },
+  activeAlertBanner: {
+    backgroundColor: '#DC2626',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  activeAlertContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  activeAlertText: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  activeAlertTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  activeAlertSubtitle: {
+    fontSize: 13,
+    color: '#FEE2E2',
+    marginTop: 2,
+  },
+  cancelAlertButton: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  cancelAlertText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  offlineText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#92400E',
   },
 });
