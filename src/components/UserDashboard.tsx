@@ -7,7 +7,11 @@ import { IoTDeviceManager } from './IoTDeviceManager';
 import { MapPin, Users, Clock, Settings, Radio } from 'lucide-react';
 import type { Contact, Alert, Location, EmergencyCategory, IoTDevice } from '../types';
 
-export function UserDashboard() {
+interface Props {
+  onLogout?: () => void;
+}
+
+export function UserDashboard({ onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<'home' | 'iot' | 'contacts' | 'history' | 'settings'>('home');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -171,7 +175,7 @@ export function UserDashboard() {
         )}
         
         {activeTab === 'settings' && (
-          <div className="p-4">
+            <div className="p-4">
             <h2 className="mb-4">Settings</h2>
             <div className="space-y-4">
               <div className="p-4 bg-gray-50 rounded-lg">
@@ -199,6 +203,9 @@ export function UserDashboard() {
                 )}
               </div>
             </div>
+              <div className="mt-4">
+                <button onClick={onLogout} className="w-full bg-red-600 text-white py-2 rounded">Logout</button>
+              </div>
           </div>
         )}
       </div>

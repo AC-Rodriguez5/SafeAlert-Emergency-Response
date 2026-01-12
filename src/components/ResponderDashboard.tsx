@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react';
 import { AlertList } from './AlertList';
 import { AlertMap } from './AlertMap';
 import { AlertStats } from './AlertStats';
-import { List, Map, BarChart3 } from 'lucide-react';
+import { List, Map, BarChart3, Settings } from 'lucide-react';
+interface Props {
+  onLogout?: () => void;
+}
 import type { Alert } from '../types';
 
-export function ResponderDashboard() {
-  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'stats'>('map');
+export function ResponderDashboard({ onLogout }: Props) {
+  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'stats' | 'settings'>('map');
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [filter, setFilter] = useState<'all' | 'active' | 'acknowledged' | 'resolved'>('all');
 
@@ -51,6 +54,7 @@ export function ResponderDashboard() {
     { id: 'map', label: 'Map View', icon: Map },
     { id: 'list', label: 'Alert List', icon: List },
     { id: 'stats', label: 'Analytics', icon: BarChart3 },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;
 
   return (
@@ -93,6 +97,24 @@ export function ResponderDashboard() {
         {activeTab === 'map' && <AlertMap alerts={alerts} onUpdateStatus={handleUpdateStatus} />}
         {activeTab === 'list' && <AlertList alerts={alerts} onUpdateStatus={handleUpdateStatus} />}
         {activeTab === 'stats' && <AlertStats alerts={alerts} />}
+        {activeTab === 'settings' && (
+          <div className="p-4 bg-white rounded-lg">
+            <h2 className="mb-4">Settings</h2>
+            <div className="space-y-4">
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <h3 className="mb-2">About</h3>
+                <p className="text-gray-600">Responder tools and settings</p>
+              </div>
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <h3 className="mb-2">Data</h3>
+                <p className="text-gray-600">Total alerts: {alerts.length}</p>
+              </div>
+            </div>
+            <div className="mt-4">
+              <button onClick={onLogout} className="w-full bg-red-600 text-white py-2 rounded">Logout</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
